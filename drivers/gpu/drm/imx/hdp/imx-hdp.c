@@ -1266,6 +1266,17 @@ static int imx_hdp_imx_bind(struct device *dev, struct device *master,
 
 	hdp->is_edid = devtype->is_edid;
 	hdp->is_4kp60 = devtype->is_4kp60;
+
+	if (of_get_property(pdev->dev.of_node, "fsl,edid", NULL))
+		hdp->is_edid = true;
+	else
+		hdp->is_edid = false;
+
+	if (of_get_property(pdev->dev.of_node, "fsl,4kp60", NULL))
+		hdp->is_4kp60 = true;
+	else
+		hdp->is_4kp60 = false;
+
 	hdp->audio_type = devtype->audio_type;
 	hdp->ops = devtype->ops;
 	hdp->rw = devtype->rw;
