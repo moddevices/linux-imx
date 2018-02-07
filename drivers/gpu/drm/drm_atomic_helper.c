@@ -2903,6 +2903,9 @@ int drm_atomic_helper_connector_dpms(struct drm_connector *connector,
 	bool active = false;
 	int old_mode = connector->dpms;
 
+	/* Always on */
+	mode = DRM_MODE_DPMS_ON;
+
 	if (mode != DRM_MODE_DPMS_ON)
 		mode = DRM_MODE_DPMS_OFF;
 
