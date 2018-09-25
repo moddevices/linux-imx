@@ -620,8 +620,6 @@ static const struct snd_soc_dapm_route cs4265_audio_map[] = {
 	{"ADC Mux", "MIC", "Pre-amp MIC"},
 	{"ADC Mux", "LINEIN", "LINEINL"},
 	{"ADC Mux", "LINEIN", "LINEINR"},
-	{"ADC Mux", "MIC", "MICL"},
-	{"ADC Mux", "MIC", "MICR"},
 	{"ADC", NULL, "ADC Mux"},
 	{"DOUT", NULL, "ADC"},
 	{"DAI1 Capture", NULL, "DOUT"},
