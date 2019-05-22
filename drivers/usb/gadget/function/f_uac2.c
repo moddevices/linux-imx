@@ -23,7 +23,7 @@
 #include "u_uac2.h"
 
 /* Keep everyone on toes */
-#define USB_XFERS	2
+#define USB_XFERS	8
 
 /*
  * The driver implements a simple UAC_2 topology.
@@ -171,7 +171,6 @@ agdev_iso_complete(struct usb_ep *ep, struct usb_request *req)
 	unsigned pending;
 	unsigned long flags, flags2;
 	unsigned int hw_ptr;
-	bool update_alsa = false;
 	int status = req->status;
 	struct uac2_req *ur = req->context;
 	struct snd_pcm_substream *substream;
@@ -711,9 +710,10 @@ static struct uac2_ac_header_descriptor ac_hdr_desc = {
 	.bDescriptorSubtype = UAC_MS_HEADER,
 	.bcdADC = cpu_to_le16(0x200),
 	.bCategory = UAC2_FUNCTION_IO_BOX,
-	.wTotalLength = sizeof in_clk_src_desc + sizeof out_clk_src_desc
-			 + sizeof usb_out_it_desc + sizeof io_in_it_desc
-			+ sizeof usb_in_ot_desc + sizeof io_out_ot_desc,
+	.wTotalLength = cpu_to_le16(sizeof ac_hdr_desc
+			+ sizeof in_clk_src_desc + sizeof out_clk_src_desc
+			+ sizeof usb_out_it_desc + sizeof io_in_it_desc
+			+ sizeof usb_in_ot_desc + sizeof io_out_ot_desc),
 	.bmControls = 0,
 };
 
