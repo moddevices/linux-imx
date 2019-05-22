@@ -196,7 +196,7 @@
 				 BIT(DMA_MEM_TO_DEV) | \
 				 BIT(DMA_DEV_TO_DEV))
 
-#define SDMA_WATERMARK_LEVEL_FIFOS_OFF	8
+#define SDMA_WATERMARK_LEVEL_FIFOS_OFF	12
 #define SDMA_WATERMARK_LEVEL_SW_DONE	BIT(23)
 #define SDMA_WATERMARK_LEVEL_SW_DONE_SEL_OFF 24
 
@@ -444,6 +444,7 @@ struct sdma_engine {
 	bool				bd0_iram;
 	struct sdma_buffer_descriptor	*bd0;
 	bool				suspend_off;
+	bool				fw_loaded;
 	int				idx;
 	/* clock ration for AHB:SDMA core. 1:1 is 1, 2:1 is 0*/
 	bool				clk_ratio;
@@ -870,6 +871,9 @@ static irqreturn_t sdma_int_handler(int irq, void *dev_id)
 	struct sdma_engine *sdma = dev_id;
 	unsigned long stat;
 
+	clk_enable(sdma->clk_ipg);
+	clk_enable(sdma->clk_ahb);
+
 	stat = readl_relaxed(sdma->regs + SDMA_H_INTR);
 	writel_relaxed(stat, sdma->regs + SDMA_H_INTR);
 	/* channel 0 is special and not handled here, see run_channel0() */
@@ -899,6 +903,9 @@ static irqreturn_t sdma_int_handler(int irq, void *dev_id)
 		__clear_bit(channel, &stat);
 		spin_unlock(&sdmac->vc.lock);
 	}
+
+	clk_disable(sdma->clk_ipg);
+	clk_disable(sdma->clk_ahb);
 
 	return IRQ_HANDLED;
 }
@@ -1074,6 +1081,7 @@ static int sdma_load_context(struct sdma_channel *sdmac)
 	return ret;
 }
 
+#ifdef CONFIG_PM_SLEEP
 static int sdma_save_restore_context(struct sdma_engine *sdma, bool save)
 {
 	struct sdma_context_data *context = sdma->context;
@@ -1098,6 +1106,7 @@ static int sdma_save_restore_context(struct sdma_engine *sdma, bool save)
 
 	return ret;
 }
+#endif
 
 static struct sdma_channel *to_sdma_chan(struct dma_chan *chan)
 {
@@ -1163,7 +1172,7 @@ static void sdma_set_watermarklevel_for_p2p(struct sdma_channel *sdmac)
 
 static void sdma_set_watermarklevel_for_sais(struct sdma_channel *sdmac)
 {
-	sdmac->watermark_level &= ~(0xFFF << SDMA_WATERMARK_LEVEL_FIFOS_OFF |
+	sdmac->watermark_level &= ~(0xFF << SDMA_WATERMARK_LEVEL_FIFOS_OFF |
 				    SDMA_WATERMARK_LEVEL_SW_DONE |
 				    0xf << SDMA_WATERMARK_LEVEL_SW_DONE_SEL_OFF);
 
@@ -1173,9 +1182,9 @@ static void sdma_set_watermarklevel_for_sais(struct sdma_channel *sdmac)
 			SDMA_WATERMARK_LEVEL_SW_DONE_SEL_OFF;
 
 	/* For fifo_num
-	 * bit 0-7 is the fifo number;
-	 * bit 8-11 is the fifo offset,
-	 * so here only need to shift left fifo_num 8 bit for watermake_level
+	 * bit 12-15 is the fifo number;
+	 * bit 16-19 is the fifo offset,
+	 * so here only need to shift left fifo_num 12 bit for watermake_level
 	 */
 	sdmac->watermark_level |= sdmac->fifo_num<<
 				SDMA_WATERMARK_LEVEL_FIFOS_OFF;
@@ -1411,6 +1420,7 @@ static int sdma_terminate_all(struct dma_chan *chan)
 		spin_unlock_irqrestore(&sdmac->vc.lock, flags);
 		sdmac->vc.desc_free(&desc->vd);
 		spin_lock_irqsave(&sdmac->vc.lock, flags);
+		sdmac->vc.cyclic = NULL;
 	}
 	if (sdmac->desc)
 		sdmac->desc = NULL;
@@ -1523,6 +1533,12 @@ static struct sdma_desc *sdma_transfer_init(struct sdma_channel *sdmac,
 			      enum dma_transfer_direction direction, u32 bds)
 {
 	struct sdma_desc *desc;
+
+	if (!sdmac->sdma->fw_loaded) {
+		dev_err(sdmac->sdma->dev, "sdma firmware not ready!\n");
+		goto err_out;
+	}
+
 	/* Now allocate and setup the descriptor. */
 	desc = kzalloc((sizeof(*desc)), GFP_ATOMIC);
 	if (!desc)
@@ -1956,7 +1972,7 @@ static void sdma_issue_pending(struct dma_chan *chan)
 
 #define SDMA_SCRIPT_ADDRS_ARRAY_SIZE_V1	34
 #define SDMA_SCRIPT_ADDRS_ARRAY_SIZE_V2	38
-#define SDMA_SCRIPT_ADDRS_ARRAY_SIZE_V3	41
+#define SDMA_SCRIPT_ADDRS_ARRAY_SIZE_V3	43
 #define SDMA_SCRIPT_ADDRS_ARRAY_SIZE_V4	44
 
 static void sdma_add_scripts(struct sdma_engine *sdma,
@@ -1988,7 +2004,7 @@ static void sdma_load_firmware(const struct firmware *fw, void *context)
 		return;
 	}
 
-	if (fw->size < sizeof(*header))
+	if (fw->size < sizeof(*header) || sdma->fw_loaded)
 		goto err_firmware;
 
 	header = (struct sdma_firmware_header *)fw->data;
@@ -2032,6 +2048,8 @@ static void sdma_load_firmware(const struct firmware *fw, void *context)
 	dev_info(sdma->dev, "loaded firmware %d.%d\n",
 			header->version_major,
 			header->version_minor);
+
+	sdma->fw_loaded = true;
 
 err_firmware:
 	release_firmware(fw);
@@ -2400,7 +2418,7 @@ static int sdma_probe(struct platform_device *pdev)
 	sdma->dma_device.src_addr_widths = SDMA_DMA_BUSWIDTHS;
 	sdma->dma_device.dst_addr_widths = SDMA_DMA_BUSWIDTHS;
 	sdma->dma_device.directions = SDMA_DMA_DIRECTIONS;
-	sdma->dma_device.residue_granularity = DMA_RESIDUE_GRANULARITY_BURST;
+	sdma->dma_device.residue_granularity = DMA_RESIDUE_GRANULARITY_SEGMENT;
 	sdma->dma_device.device_prep_dma_memcpy = sdma_prep_memcpy;
 	sdma->dma_device.device_prep_dma_sg = sdma_prep_memcpy_sg;
 	sdma->dma_device.device_issue_pending = sdma_issue_pending;
@@ -2542,6 +2560,10 @@ static int sdma_resume(struct device *dev)
 		if (i > SDMA_XTRIG_CONF2 / 4)
 			writel_relaxed(sdma->save_regs[i], sdma->regs +
 				       MXC_SDMA_RESERVED_REG + 4 * i);
+		/* set static context switch  mode before channel0 running */
+		else if (i == SDMA_H_CONFIG / 4)
+			writel_relaxed(sdma->save_regs[i] & ~SDMA_H_CONFIG_CSM,
+					sdma->regs + SDMA_H_CONFIG);
 		else
 			writel_relaxed(sdma->save_regs[i] , sdma->regs + 4 * i);
 	}
