@@ -75,8 +75,6 @@ struct uac2_rtd_params {
 
 	void *rbuf;
 
-	size_t period_size;
-
 	unsigned max_psize;
 	struct uac2_req ureq[USB_XFERS];
 
@@ -171,7 +169,7 @@ static void
 agdev_iso_complete(struct usb_ep *ep, struct usb_request *req)
 {
 	unsigned pending;
-	unsigned long flags;
+	unsigned long flags, flags2;
 	unsigned int hw_ptr;
 	bool update_alsa = false;
 	int status = req->status;
@@ -197,6 +195,13 @@ agdev_iso_complete(struct usb_ep *ep, struct usb_request *req)
 	/* Do nothing if ALSA isn't active */
 	if (!substream)
 		goto exit;
+
+	snd_pcm_stream_lock_irqsave(substream, flags2);
+
+	if (!snd_pcm_running(substream)) {
+		snd_pcm_stream_unlock_irqrestore(substream, flags2);
+		goto exit;
+	}
 
 	spin_lock_irqsave(&prm->lock, flags);
 
@@ -224,13 +229,7 @@ agdev_iso_complete(struct usb_ep *ep, struct usb_request *req)
 		req->actual = req->length;
 	}
 
-	pending = prm->hw_ptr % prm->period_size;
-	pending += req->actual;
-	if (pending >= prm->period_size)
-		update_alsa = true;
-
 	hw_ptr = prm->hw_ptr;
-	prm->hw_ptr = (prm->hw_ptr + req->actual) % prm->dma_bytes;
 
 	spin_unlock_irqrestore(&prm->lock, flags);
 
@@ -255,12 +254,18 @@ agdev_iso_complete(struct usb_ep *ep, struct usb_request *req)
 		}
 	}
 
+	spin_lock_irqsave(&prm->lock, flags);
+	/* update hw_ptr after data is copied to memory */
+	prm->hw_ptr = (hw_ptr + req->actual) % prm->dma_bytes;
+	spin_unlock_irqrestore(&prm->lock, flags);
+	snd_pcm_stream_unlock_irqrestore(substream, flags2);
+
+	if ((hw_ptr % snd_pcm_lib_period_bytes(substream)) < req->actual)
+		snd_pcm_period_elapsed(substream);
+
 exit:
 	if (usb_ep_queue(ep, req, GFP_ATOMIC))
 		dev_err(&uac2->pdev.dev, "%d Error!\n", __LINE__);
-
-	if (update_alsa)
-		snd_pcm_period_elapsed(substream);
 
 	return;
 }
@@ -335,7 +340,6 @@ static int uac2_pcm_hw_params(struct snd_pcm_substream *substream,
 	if (err >= 0) {
 		prm->dma_bytes = substream->runtime->dma_bytes;
 		prm->dma_area = substream->runtime->dma_area;
-		prm->period_size = params_period_bytes(hw_params);
 	}
 
 	return err;
@@ -353,7 +357,6 @@ static int uac2_pcm_hw_free(struct snd_pcm_substream *substream)
 
 	prm->dma_area = NULL;
 	prm->dma_bytes = 0;
-	prm->period_size = 0;
 
 	return snd_pcm_lib_free_pages(substream);
 }
