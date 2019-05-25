@@ -31,6 +31,253 @@
 #include <sound/tlv.h>
 #include "cs4265.h"
 
+//----------------------------------------------------------------------
+
+#ifdef  __MOD_DEVICES__
+
+// GPIO macros
+#define CHANNEL_LEFT    0
+#define CHANNEL_RIGHT   1
+
+#define GPIO_BYPASS     0
+#define GPIO_PROCESS    1
+
+/* Default headphone volume is 11th step (of a total of 16) which corresponds to a 0dB gain.
+ * Each step corresponds to 3dB. */
+static int headphone_volume = 11;
+static int input_left_gain_stage = 0;
+static int input_right_gain_stage = 0;
+static bool left_true_bypass = true;
+static bool right_true_bypass = true;
+
+static struct _modduox_gpios {
+//	struct gpio_desc *headphone_cv_mode;
+	struct gpio_desc *headphone_clk;
+	struct gpio_desc *headphone_dir;
+	struct gpio_desc *gain_stage_left1;
+	struct gpio_desc *gain_stage_left2;
+	struct gpio_desc *gain_stage_right1;
+	struct gpio_desc *gain_stage_right2;
+	struct gpio_desc *true_bypass_left;
+	struct gpio_desc *true_bypass_right;
+} *modduox_gpios;
+
+static int modduox_init(struct i2c_client *i2c_client)
+{
+	modduox_gpios = devm_kzalloc(&i2c_client->dev, sizeof(struct _modduox_gpios), GFP_KERNEL);
+	if (modduox_gpios == NULL)
+		return -ENOMEM;
+
+	//modduox_gpios->headphone_cv_mode = devm_gpiod_get(&i2c_client->dev, "headphone_cv_mode", GPIOD_OUT_LOW);
+	modduox_gpios->headphone_clk     = devm_gpiod_get(&i2c_client->dev, "headphone_clk",     GPIOD_OUT_HIGH);
+	modduox_gpios->headphone_dir     = devm_gpiod_get(&i2c_client->dev, "headphone_dir",     GPIOD_OUT_HIGH);
+	modduox_gpios->gain_stage_left1  = devm_gpiod_get(&i2c_client->dev, "gain_stage_left1",  GPIOD_OUT_HIGH);
+	modduox_gpios->gain_stage_left2  = devm_gpiod_get(&i2c_client->dev, "gain_stage_left2",  GPIOD_OUT_HIGH);
+	modduox_gpios->gain_stage_right1 = devm_gpiod_get(&i2c_client->dev, "gain_stage_right1", GPIOD_OUT_HIGH);
+	modduox_gpios->gain_stage_right2 = devm_gpiod_get(&i2c_client->dev, "gain_stage_right2", GPIOD_OUT_HIGH);
+
+	// bypass is inverted
+	modduox_gpios->true_bypass_left  = devm_gpiod_get(&i2c_client->dev, "true_bypass_left",  GPIOD_OUT_LOW);
+	modduox_gpios->true_bypass_right = devm_gpiod_get(&i2c_client->dev, "true_bypass_right", GPIOD_OUT_LOW);
+	return 0;
+}
+
+/* This routine flips the GPIO pins to send the volume adjustment
+   message to the actual headphone gain-control chip (LM4811) */
+static void set_headphone_volume(int new_volume)
+{
+	int i;
+	int steps = abs(new_volume - headphone_volume);
+
+	// select volume adjustment direction
+	gpiod_set_value(modduox_gpios->headphone_dir, new_volume > headphone_volume ? 1 : 0);
+
+	for (i=0; i < steps; i++) {
+		// toggle clock in order to sample the volume pin upon clock's rising edge
+		gpiod_set_value(modduox_gpios->headphone_clk, 1);
+		gpiod_set_value(modduox_gpios->headphone_clk, 0);
+	}
+
+	headphone_volume = new_volume;
+}
+
+static void mod_duo_set_gain_stage(int channel, int state)
+{
+	struct gpio_desc *gpio1, *gpio2;
+
+	switch (channel) {
+	case CHANNEL_LEFT:
+		gpio1 = modduox_gpios->gain_stage_left1;
+		gpio2 = modduox_gpios->gain_stage_left2;
+		input_left_gain_stage = state;
+		break;
+	case CHANNEL_RIGHT:
+		gpio1 = modduox_gpios->gain_stage_right1;
+		gpio2 = modduox_gpios->gain_stage_right2;
+		input_right_gain_stage = state;
+		break;
+	default:
+		return;
+	}
+
+	switch (state) {
+	case 0:
+		gpiod_set_value(gpio1, 1);
+		gpiod_set_value(gpio2, 1);
+		break;
+	case 1:
+		gpiod_set_value(gpio1, 1);
+		gpiod_set_value(gpio2, 0);
+		break;
+	case 2:
+		gpiod_set_value(gpio1, 0);
+		gpiod_set_value(gpio2, 1);
+		break;
+	case 3:
+		gpiod_set_value(gpio1, 0);
+		gpiod_set_value(gpio2, 0);
+		break;
+	}
+}
+
+/* state == bypass:
+ * No audio processing.
+ * Input is connected directly to output, bypassing the codec.
+ *
+ * state == process:
+ * INPUT => CODEC => OUTPUT
+ */
+static void mod_duo_set_true_bypass(int channel, bool state)
+{
+	switch (channel) {
+	case CHANNEL_LEFT:
+		gpiod_set_value(modduox_gpios->true_bypass_left, state ? GPIO_BYPASS : GPIO_PROCESS);
+		left_true_bypass = state;
+		break;
+	case CHANNEL_RIGHT:
+		gpiod_set_value(modduox_gpios->true_bypass_right, state ? GPIO_BYPASS : GPIO_PROCESS);
+		right_true_bypass = state;
+		break;
+	}
+}
+
+//----------------------------------------------------------------------
+
+static int headphone_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 15;
+	return 0;
+}
+
+static int headphone_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = headphone_volume;
+	return 0;
+}
+
+static int headphone_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (headphone_volume != ucontrol->value.integer.value[0]) {
+		set_headphone_volume(ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+//----------------------------------------------------------------------
+
+static int input_gain_stage_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 3;
+	return 0;
+}
+
+static int input_left_gain_stage_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = input_left_gain_stage;
+	return 0;
+}
+
+static int input_right_gain_stage_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = input_right_gain_stage;
+	return 0;
+}
+
+static int input_left_gain_stage_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (input_left_gain_stage != ucontrol->value.integer.value[0]) {
+		mod_duo_set_gain_stage(CHANNEL_LEFT, ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+static int input_right_gain_stage_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (input_right_gain_stage != ucontrol->value.integer.value[0]) {
+		mod_duo_set_gain_stage(CHANNEL_RIGHT, ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+//----------------------------------------------------------------------
+
+static int true_bypass_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+
+static int left_true_bypass_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = left_true_bypass;
+	return 0;
+}
+
+static int right_true_bypass_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = right_true_bypass;
+	return 0;
+}
+
+static int left_true_bypass_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (left_true_bypass != ucontrol->value.integer.value[0]) {
+		mod_duo_set_true_bypass(CHANNEL_LEFT, ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+static int right_true_bypass_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (right_true_bypass != ucontrol->value.integer.value[0]) {
+		mod_duo_set_true_bypass(CHANNEL_RIGHT, ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+#endif // __MOD_DEVICES__
+
+//----------------------------------------------------------------------
+
 struct cs4265_private {
 	struct regmap *regmap;
 	struct gpio_desc *reset_gpio;
@@ -131,10 +378,23 @@ static const struct snd_kcontrol_new spdif_switch =
 static const struct snd_kcontrol_new dac_switch =
 	SOC_DAPM_SINGLE("Switch", CS4265_PWRCTL, 1, 1, 0);
 
+static const unsigned int gain_stages_tlv[] = {
+    TLV_DB_RANGE_HEAD(4),
+    0, 0, TLV_DB_SCALE_ITEM(0,  0, 0),
+    1, 1, TLV_DB_SCALE_ITEM(6.0, 0, 0),
+    2, 2, TLV_DB_SCALE_ITEM(15.0, 0, 0),
+    3, 3, TLV_DB_SCALE_ITEM(20.4, 0, 0),
+};
+
 static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 
+#ifdef __MOD_DEVICES__
+	SOC_DOUBLE_R_SX_TLV("PGA Gain", CS4265_CHA_PGA_CTL,
+			      CS4265_CHB_PGA_CTL, 0, 0x28, 0x30, pga_tlv),
+#else
 	SOC_DOUBLE_R_SX_TLV("PGA Volume", CS4265_CHA_PGA_CTL,
 			      CS4265_CHB_PGA_CTL, 0, 0x28, 0x30, pga_tlv),
+#endif
 	SOC_DOUBLE_R_TLV("DAC Volume", CS4265_DAC_CHA_VOL,
 		      CS4265_DAC_CHB_VOL, 0, 0xFF, 1, dac_tlv),
 	SOC_SINGLE("De-emp 44.1kHz Switch", CS4265_DAC_CTL, 1,
@@ -161,6 +421,56 @@ static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 	SOC_SINGLE("MMTLR Data Switch", CS4265_SPDIF_CTL2, 0, 1, 0),
 	SOC_ENUM("Mono Channel Select", spdif_mono_select_enum),
 	SND_SOC_BYTES("C Data Buffer", CS4265_C_DATA_BUFF, 24),
+
+#ifdef __MOD_DEVICES__
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Headphone Playback Volume",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = headphone_info,
+		.get = headphone_get,
+		.put = headphone_put
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Left Gain Stage",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = input_gain_stage_info,
+		.get = input_left_gain_stage_get,
+		.put = input_left_gain_stage_put,
+		.tlv.p = gain_stages_tlv
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Right Gain Stage",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = input_gain_stage_info,
+		.get = input_right_gain_stage_get,
+		.put = input_right_gain_stage_put,
+		.tlv.p = gain_stages_tlv
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Left True-Bypass",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = true_bypass_info,
+		.get = left_true_bypass_get,
+		.put = left_true_bypass_put
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Right True-Bypass",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = true_bypass_info,
+		.get = right_true_bypass_get,
+		.put = right_true_bypass_put
+	},
+#endif
 };
 
 static const struct snd_soc_dapm_widget cs4265_dapm_widgets[] = {
@@ -623,6 +933,12 @@ static int cs4265_i2c_probe(struct i2c_client *i2c_client,
 	ret =  snd_soc_register_codec(&i2c_client->dev,
 			&soc_codec_cs4265, cs4265_dai,
 			ARRAY_SIZE(cs4265_dai));
+
+#ifdef __MOD_DEVICES__
+	if (ret == 0)
+		ret = modduox_init(i2c_client);
+#endif
+
 	return ret;
 }
 
