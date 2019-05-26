@@ -420,7 +420,10 @@ static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 	SOC_ENUM("SPDIF Mono/Stereo", spdif_mono_stereo_enum),
 	SOC_SINGLE("MMTLR Data Switch", CS4265_SPDIF_CTL2, 0, 1, 0),
 	SOC_ENUM("Mono Channel Select", spdif_mono_select_enum),
+#ifndef __MOD_DEVICES__
+	// gives errors trying to read current value, and we dont need it anyway
 	SND_SOC_BYTES("C Data Buffer", CS4265_C_DATA_BUFF, 24),
+#endif
 
 #ifdef __MOD_DEVICES__
 	{
