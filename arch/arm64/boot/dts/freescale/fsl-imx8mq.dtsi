@@ -421,12 +421,17 @@
 			polling-delay = <2000>;
 			thermal-sensors = <&tmu>;
 			trips {
-				cpu_alert0: trip0 {
-					temperature = <85000>;
+				cpu_temp_passive: cpu-temp-passive {
+					temperature = <80000>;
 					hysteresis = <2000>;
 					type = "passive";
 				};
-				cpu_crit0: trip1 {
+				cpu_temp_hot: cpu-temp-hot {
+					temperature = <85000>;
+					hysteresis = <2000>;
+					type = "hot";
+				};
+				cpu_temp_critical: cpu-temp-critical {
 					temperature = <95000>;
 					hysteresis = <2000>;
 					type = "critical";
@@ -434,10 +439,21 @@
 			};
 
 			cooling-maps {
-				map0 {
-					trip = <&cpu_alert0>;
+				map_passive {
+					trip = <&cpu_temp_passive>;
 					cooling-device =
-					<&A53_0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					<&A53_0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					<&A53_1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					<&A53_2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					<&A53_3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+				};
+				map_hot {
+					trip = <&cpu_temp_hot>;
+					cooling-device =
+					<&A53_0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					<&A53_1 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					<&A53_2 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
+					<&A53_3 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 				};
 			};
 		};
@@ -1453,8 +1469,8 @@
 &A53_0 {
 	operating-points = <
 		/* kHz    uV */
+		1500000 1000000
 		1000000 900000
-		800000	900000
 	>;
 	clocks = <&clk IMX8MQ_CLK_A53_DIV>, <&clk IMX8MQ_CLK_A53_SRC>,
 		<&clk IMX8MQ_ARM_PLL>, <&clk IMX8MQ_ARM_PLL_OUT>,
