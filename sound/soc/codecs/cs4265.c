@@ -42,9 +42,10 @@
 #define GPIO_BYPASS     0
 #define GPIO_PROCESS    1
 
-/* Default headphone volume is 11th step (of a total of 16) which corresponds to a 0dB gain.
- * Each step corresponds to 3dB. */
-static int headphone_volume = 11;
+/* Headphone volume has a total of 16 step, each corresponds to 3dB.
+ * Step 11 is 0dB.
+ */
+static int headphone_volume = 0;
 static int input_left_gain_stage = 0;
 static int input_right_gain_stage = 0;
 static bool left_true_bypass = true;
@@ -64,6 +65,8 @@ static struct _modduox_gpios {
 
 static int modduox_init(struct i2c_client *i2c_client)
 {
+	int i;
+
 	modduox_gpios = devm_kzalloc(&i2c_client->dev, sizeof(struct _modduox_gpios), GFP_KERNEL);
 	if (modduox_gpios == NULL)
 		return -ENOMEM;
@@ -79,6 +82,16 @@ static int modduox_init(struct i2c_client *i2c_client)
 	// bypass is inverted
 	modduox_gpios->true_bypass_left  = devm_gpiod_get(&i2c_client->dev, "true_bypass_left",  GPIOD_OUT_LOW);
 	modduox_gpios->true_bypass_right = devm_gpiod_get(&i2c_client->dev, "true_bypass_right", GPIOD_OUT_LOW);
+
+	// put headphone volume to lowest setting, so we know where we are
+	gpiod_set_value(modduox_gpios->headphone_dir, 0);
+
+	for (i=0; i < 16; i++) {
+		// toggle clock in order to sample the volume pin upon clock's rising edge
+		gpiod_set_value(modduox_gpios->headphone_clk, 1);
+		gpiod_set_value(modduox_gpios->headphone_clk, 0);
+	}
+
 	return 0;
 }
 
