@@ -50,9 +50,10 @@ static int input_left_gain_stage = 0;
 static int input_right_gain_stage = 0;
 static bool left_true_bypass = true;
 static bool right_true_bypass = true;
+static bool headphone_cv_mode = false;
 
 static struct _modduox_gpios {
-//	struct gpio_desc *headphone_cv_mode;
+	struct gpio_desc *headphone_cv_mode;
 	struct gpio_desc *headphone_clk;
 	struct gpio_desc *headphone_dir;
 	struct gpio_desc *gain_stage_left1;
@@ -71,7 +72,7 @@ static int modduox_init(struct i2c_client *i2c_client)
 	if (modduox_gpios == NULL)
 		return -ENOMEM;
 
-	//modduox_gpios->headphone_cv_mode = devm_gpiod_get(&i2c_client->dev, "headphone_cv_mode", GPIOD_OUT_LOW);
+	modduox_gpios->headphone_cv_mode = devm_gpiod_get(&i2c_client->dev, "headphone_cv_mode", GPIOD_OUT_HIGH);
 	modduox_gpios->headphone_clk     = devm_gpiod_get(&i2c_client->dev, "headphone_clk",     GPIOD_OUT_HIGH);
 	modduox_gpios->headphone_dir     = devm_gpiod_get(&i2c_client->dev, "headphone_dir",     GPIOD_OUT_HIGH);
 	modduox_gpios->gain_stage_left1  = devm_gpiod_get(&i2c_client->dev, "gain_stage_left1",  GPIOD_OUT_HIGH);
@@ -92,6 +93,8 @@ static int modduox_init(struct i2c_client *i2c_client)
 		gpiod_set_value(modduox_gpios->headphone_clk, 0);
 	}
 
+	// initialize gpios
+	gpiod_set_value(modduox_gpios->headphone_cv_mode, 0);
 	return 0;
 }
 
@@ -114,7 +117,7 @@ static void set_headphone_volume(int new_volume)
 	headphone_volume = new_volume;
 }
 
-static void mod_duo_set_gain_stage(int channel, int state)
+static void set_gain_stage(int channel, int state)
 {
 	struct gpio_desc *gpio1, *gpio2;
 
@@ -160,7 +163,7 @@ static void mod_duo_set_gain_stage(int channel, int state)
  * state == process:
  * INPUT => CODEC => OUTPUT
  */
-static void mod_duo_set_true_bypass(int channel, bool state)
+static void set_true_bypass(int channel, bool state)
 {
 	switch (channel) {
 	case CHANNEL_LEFT:
@@ -170,6 +173,22 @@ static void mod_duo_set_true_bypass(int channel, bool state)
 	case CHANNEL_RIGHT:
 		gpiod_set_value(modduox_gpios->true_bypass_right, state ? GPIO_BYPASS : GPIO_PROCESS);
 		right_true_bypass = state;
+		break;
+	}
+}
+
+/* switch thingies
+ */
+static void set_headphone_cv_mode(int mode)
+{
+	switch (mode)
+	{
+	case 0:
+	case 1:
+		gpiod_set_value(modduox_gpios->headphone_cv_mode, mode);
+		headphone_cv_mode = mode != 0;
+		break;
+	default:
 		break;
 	}
 }
@@ -228,7 +247,7 @@ static int input_left_gain_stage_put(struct snd_kcontrol *kcontrol, struct snd_c
 {
 	int changed = 0;
 	if (input_left_gain_stage != ucontrol->value.integer.value[0]) {
-		mod_duo_set_gain_stage(CHANNEL_LEFT, ucontrol->value.integer.value[0]);
+		set_gain_stage(CHANNEL_LEFT, ucontrol->value.integer.value[0]);
 		changed = 1;
 	}
 	return changed;
@@ -238,7 +257,7 @@ static int input_right_gain_stage_put(struct snd_kcontrol *kcontrol, struct snd_
 {
 	int changed = 0;
 	if (input_right_gain_stage != ucontrol->value.integer.value[0]) {
-		mod_duo_set_gain_stage(CHANNEL_RIGHT, ucontrol->value.integer.value[0]);
+		set_gain_stage(CHANNEL_RIGHT, ucontrol->value.integer.value[0]);
 		changed = 1;
 	}
 	return changed;
@@ -271,7 +290,7 @@ static int left_true_bypass_put(struct snd_kcontrol *kcontrol, struct snd_ctl_el
 {
 	int changed = 0;
 	if (left_true_bypass != ucontrol->value.integer.value[0]) {
-		mod_duo_set_true_bypass(CHANNEL_LEFT, ucontrol->value.integer.value[0]);
+		set_true_bypass(CHANNEL_LEFT, ucontrol->value.integer.value[0]);
 		changed = 1;
 	}
 	return changed;
@@ -281,7 +300,34 @@ static int right_true_bypass_put(struct snd_kcontrol *kcontrol, struct snd_ctl_e
 {
 	int changed = 0;
 	if (right_true_bypass != ucontrol->value.integer.value[0]) {
-		mod_duo_set_true_bypass(CHANNEL_RIGHT, ucontrol->value.integer.value[0]);
+		set_true_bypass(CHANNEL_RIGHT, ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+//----------------------------------------------------------------------
+
+static int headphone_cv_mode_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+
+static int headphone_cv_mode_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = headphone_cv_mode;
+	return 0;
+}
+
+static int headphone_cv_mode_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (headphone_cv_mode != ucontrol->value.integer.value[0]) {
+		set_headphone_cv_mode(ucontrol->value.integer.value[0]);
 		changed = 1;
 	}
 	return changed;
@@ -485,6 +531,15 @@ static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 		.info = true_bypass_info,
 		.get = right_true_bypass_get,
 		.put = right_true_bypass_put
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Headphone/CV Mode",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = headphone_cv_mode_info,
+		.get = headphone_cv_mode_get,
+		.put = headphone_cv_mode_put
 	},
 #endif
 };
