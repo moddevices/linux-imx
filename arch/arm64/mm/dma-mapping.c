@@ -371,7 +371,9 @@ static int __swiotlb_dma_mapping_error(struct device *hwdev, dma_addr_t addr)
 static int __swiotlb_dma_supported_quirk(struct device *hwdev, u64 mask)
 {
 	if (mask > DMA_BIT_MASK(32)) {
+#ifndef CONFIG_ARCH_FSL_IMX8MQ
 		pr_err("Can't support > 32 bit dma.\n");
+#endif
 		return 0;
 	}
 
@@ -985,7 +987,9 @@ void arch_teardown_dma_ops(struct device *dev)
 static int iommu_dma_supported_quirk(struct device *dev, u64 mask)
 {
 	if (mask > DMA_BIT_MASK(32)) {
+#ifndef CONFIG_ARCH_FSL_IMX8MQ
 		pr_err("Can't support > 32 bit dma.\n");
+#endif
 		return 0;
 	}
 
