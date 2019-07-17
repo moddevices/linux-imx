@@ -97,6 +97,7 @@ static u32 imx_init_revision_from_atf(void)
 	return rev;
 }
 
+#if defined(ARCH_FSL_IMX8QM) || defined(ARCH_FSL_IMX8QXP)
 static u32 imx_init_revision_from_scu(void)
 {
 	uint32_t mu_id;
@@ -141,9 +142,11 @@ static u32 imx_init_revision_from_scu(void)
 
 	return rev;
 }
+#endif
 
-bool TKT340553_SW_WORKAROUND;
+bool TKT340553_SW_WORKAROUND = false;
 
+#ifdef ARCH_FSL_IMX8QM
 static u32 imx8qm_soc_revision(void)
 {
 	u32 rev = imx_init_revision_from_scu();
@@ -153,11 +156,14 @@ static u32 imx8qm_soc_revision(void)
 
 	return rev;
 }
+#endif
 
+#ifdef ARCH_FSL_IMX8QXP
 static u32 imx8qxp_soc_revision(void)
 {
 	return imx_init_revision_from_scu();
 }
+#endif
 
 #define OCOTP_UID_LOW	0x410
 #define OCOTP_UID_HIGH	0x420
@@ -204,15 +210,19 @@ static u32 imx8mm_soc_revision(void)
 	return imx_init_revision_from_atf();
 }
 
+#ifdef ARCH_FSL_IMX8QM
 static struct imx8_soc_data imx8qm_soc_data = {
 	.name = "i.MX8QM",
 	.soc_revision = imx8qm_soc_revision,
 };
+#endif
 
+#ifdef ARCH_FSL_IMX8QXP
 static struct imx8_soc_data imx8qxp_soc_data = {
 	.name = "i.MX8QXP",
 	.soc_revision = imx8qxp_soc_revision,
 };
+#endif
 
 static struct imx8_soc_data imx8mq_soc_data = {
 	.name = "i.MX8MQ",
@@ -225,12 +235,18 @@ static struct imx8_soc_data imx8mm_soc_data = {
 };
 
 static const struct of_device_id imx8_soc_match[] = {
+#ifdef ARCH_FSL_IMX8QM
 	{ .compatible = "fsl,imx8qm", .data = &imx8qm_soc_data, },
+#endif
+#ifdef ARCH_FSL_IMX8QXP
 	{ .compatible = "fsl,imx8qxp", .data = &imx8qxp_soc_data, },
+#endif
 	{ .compatible = "fsl,imx8mq", .data = &imx8mq_soc_data, },
 	{ .compatible = "fsl,imx8mm", .data = &imx8mm_soc_data, },
+#ifdef ARCH_FSL_IMX8QM
 	/* Fixme: this is a hack for big/little xen guest, b0 no need this */
 	{ .compatible = "xen,xenvm", .data = &imx8qm_soc_data, },
+#endif
 	{ }
 };
 
