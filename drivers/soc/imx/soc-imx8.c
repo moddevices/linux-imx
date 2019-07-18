@@ -590,6 +590,7 @@ put_node:
 	return false;
 }
 
+#ifdef ARCH_FSL_IMX8QM
 #define IMX8QM_FEATURE_BITS	0x3
 #define IMX8QM_FEATURE_HDCP	(1<<3)
 
@@ -630,12 +631,15 @@ static int imx8qm_soc_is_hdcp_available(void)
 	pr_debug("HDCP is disabled\n");
 	return false;
 }
+#endif
 
 bool check_hdcp_enabled(void)
 {
 	if (cpu_is_imx8mq())
 		return imx8mq_soc_is_hdcp_available();
+#ifdef ARCH_FSL_IMX8QM
 	if (cpu_is_imx8qm())
 		return imx8qm_soc_is_hdcp_available();
+#endif
 	return false;
 }
