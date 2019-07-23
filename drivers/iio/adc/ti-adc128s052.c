@@ -136,9 +136,20 @@ static const struct iio_info adc128_info = {
 static int adc128_probe(struct spi_device *spi)
 {
 	struct iio_dev *indio_dev;
+	struct spi_device_id *dev_id;
 	struct adc128 *adc;
-	int config = spi_get_device_id(spi)->driver_data;
+	int config;
 	int ret;
+
+	dev_id = spi_get_device_id(spi);
+
+	if (!dev_id)
+	{
+		printk("adc128_probe: failed to get spi device id\n");
+		return -EINVAL;
+	}
+
+	config = dev_id->driver_data;
 
 	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*adc));
 	if (!indio_dev)
@@ -151,7 +162,7 @@ static int adc128_probe(struct spi_device *spi)
 
 	indio_dev->dev.parent = &spi->dev;
 	indio_dev->dev.of_node = spi->dev.of_node;
-	indio_dev->name = spi_get_device_id(spi)->name;
+	indio_dev->name = dev_id->name;
 	indio_dev->modes = INDIO_DIRECT_MODE;
 	indio_dev->info = &adc128_info;
 
