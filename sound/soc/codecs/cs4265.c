@@ -35,6 +35,8 @@
 
 #ifdef  __MOD_DEVICES__
 
+#define MOD_RELEASE_1x8_COMPATIBLE
+
 // GPIO macros
 #define CHANNEL_LEFT    0
 #define CHANNEL_RIGHT   1
@@ -50,10 +52,14 @@ static int input_left_gain_stage = 0;
 static int input_right_gain_stage = 0;
 static bool left_true_bypass = true;
 static bool right_true_bypass = true;
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 static bool headphone_cv_mode = false;
+#endif
 
 static struct _modduox_gpios {
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 	struct gpio_desc *headphone_cv_mode;
+#endif
 	struct gpio_desc *headphone_clk;
 	struct gpio_desc *headphone_dir;
 	struct gpio_desc *gain_stage_left1;
@@ -72,7 +78,9 @@ static int modduox_init(struct i2c_client *i2c_client)
 	if (modduox_gpios == NULL)
 		return -ENOMEM;
 
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 	modduox_gpios->headphone_cv_mode = devm_gpiod_get(&i2c_client->dev, "headphone_cv_mode", GPIOD_OUT_HIGH);
+#endif
 	modduox_gpios->headphone_clk     = devm_gpiod_get(&i2c_client->dev, "headphone_clk",     GPIOD_OUT_HIGH);
 	modduox_gpios->headphone_dir     = devm_gpiod_get(&i2c_client->dev, "headphone_dir",     GPIOD_OUT_HIGH);
 	modduox_gpios->gain_stage_left1  = devm_gpiod_get(&i2c_client->dev, "gain_stage_left1",  GPIOD_OUT_HIGH);
@@ -93,8 +101,10 @@ static int modduox_init(struct i2c_client *i2c_client)
 		gpiod_set_value(modduox_gpios->headphone_clk, 0);
 	}
 
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 	// initialize gpios
 	gpiod_set_value(modduox_gpios->headphone_cv_mode, 0);
+#endif
 	return 0;
 }
 
@@ -177,6 +187,7 @@ static void set_true_bypass(int channel, bool state)
 	}
 }
 
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 /* switch thingies
  */
 static void set_headphone_cv_mode(int mode)
@@ -192,6 +203,7 @@ static void set_headphone_cv_mode(int mode)
 		break;
 	}
 }
+#endif
 
 //----------------------------------------------------------------------
 
@@ -306,6 +318,7 @@ static int right_true_bypass_put(struct snd_kcontrol *kcontrol, struct snd_ctl_e
 	return changed;
 }
 
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 //----------------------------------------------------------------------
 
 static int headphone_cv_mode_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
@@ -332,6 +345,7 @@ static int headphone_cv_mode_put(struct snd_kcontrol *kcontrol, struct snd_ctl_e
 	}
 	return changed;
 }
+#endif
 
 #endif // __MOD_DEVICES__
 
@@ -532,6 +546,7 @@ static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 		.get = right_true_bypass_get,
 		.put = right_true_bypass_put
 	},
+#ifndef MOD_RELEASE_1x8_COMPATIBLE
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 		.name = "Headphone/CV Mode",
@@ -541,6 +556,7 @@ static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 		.get = headphone_cv_mode_get,
 		.put = headphone_cv_mode_put
 	},
+#endif
 #endif
 };
 
