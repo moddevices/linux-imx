@@ -298,17 +298,12 @@ static void __init imx8mq_noc_init(void)
 {
 	struct arm_smccc_res res;
 
-	pr_info("Config NOC for VPU and CPU\n");
+	pr_info("Config NOC for CPU\n");
 
 	arm_smccc_smc(FSL_SIP_NOC, FSL_SIP_NOC_PRIORITY, NOC_CPU_PRIORITY,
 			0x80000300, 0, 0, 0, 0, &res);
 	if (res.a0)
 		pr_err("Config NOC for CPU fail!\n");
-
-	arm_smccc_smc(FSL_SIP_NOC, FSL_SIP_NOC_PRIORITY, NOC_VPU_PRIORITY,
-			0x80000300, 0, 0, 0, 0, &res);
-	if (res.a0)
-		pr_err("Config NOC for VPU fail!\n");
 }
 
 static int __init imx8_soc_init(void)
