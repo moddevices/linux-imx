@@ -42,15 +42,21 @@
 #define GPIO_BYPASS     0
 #define GPIO_PROCESS    1
 
-/* Headphone volume has a total of 16 step, each corresponds to 3dB.
- * Step 11 is 0dB.
- */
-static int headphone_volume = 0;
+#define CV_RANGE_MODE_m2d5_to_2d5 false
+#define CV_RANGE_MODE_0_to_5      true
+
+#define EXP_PEDAL_SIGNAL_ON_RING false
+#define EXP_PEDAL_SIGNAL_ON_TIP  true
+
+static int headphone_volume = 0; // Headphone volume has a total of 16 steps, each corresponds to 3dB. Step 11 is 0dB.
 static int input_left_gain_stage = 0;
 static int input_right_gain_stage = 0;
 static bool left_true_bypass = true;
 static bool right_true_bypass = true;
-static bool headphone_cv_mode = false;
+static bool headphone_cv_mode = false; // true means CV mode, false is headphone (CV output mode)
+static bool cv_exp_pedal_mode = false; // true means expression pedal mode (CV input mode)
+static bool cv_range_mode = CV_RANGE_MODE_m2d5_to_2d5;
+static bool exp_pedal_mode = EXP_PEDAL_SIGNAL_ON_RING;
 
 static struct _modduox_gpios {
 	struct gpio_desc *headphone_cv_mode;
@@ -62,6 +68,12 @@ static struct _modduox_gpios {
 	struct gpio_desc *gain_stage_right2;
 	struct gpio_desc *true_bypass_left;
 	struct gpio_desc *true_bypass_right;
+	struct gpio_desc *exp_enable1;
+	struct gpio_desc *exp_enable2;
+	struct gpio_desc *exp_flag1;
+	struct gpio_desc *exp_flag2;
+	struct gpio_desc *cv_detect;
+	struct gpio_desc *cv_in_bias;
 } *modduox_gpios;
 
 static int modduox_init(struct i2c_client *i2c_client)
@@ -79,6 +91,12 @@ static int modduox_init(struct i2c_client *i2c_client)
 	modduox_gpios->gain_stage_left2  = devm_gpiod_get(&i2c_client->dev, "gain_stage_left2",  GPIOD_OUT_HIGH);
 	modduox_gpios->gain_stage_right1 = devm_gpiod_get(&i2c_client->dev, "gain_stage_right1", GPIOD_OUT_HIGH);
 	modduox_gpios->gain_stage_right2 = devm_gpiod_get(&i2c_client->dev, "gain_stage_right2", GPIOD_OUT_HIGH);
+	modduox_gpios->exp_enable1       = devm_gpiod_get(&i2c_client->dev, "exp_enable1",       GPIOD_OUT_HIGH);
+	modduox_gpios->exp_enable2       = devm_gpiod_get(&i2c_client->dev, "exp_enable2",       GPIOD_OUT_HIGH);
+	modduox_gpios->exp_flag1         = devm_gpiod_get(&i2c_client->dev, "exp_flag1",         GPIOD_OUT_HIGH);
+	modduox_gpios->exp_flag2         = devm_gpiod_get(&i2c_client->dev, "exp_flag2",         GPIOD_OUT_HIGH);
+	modduox_gpios->cv_detect         = devm_gpiod_get(&i2c_client->dev, "cv_detect",         GPIOD_OUT_HIGH);
+	modduox_gpios->cv_in_bias        = devm_gpiod_get(&i2c_client->dev, "cv_in_bias",        GPIOD_OUT_HIGH);
 
 	// bypass is inverted
 	modduox_gpios->true_bypass_left  = devm_gpiod_get(&i2c_client->dev, "true_bypass_left",  GPIOD_OUT_LOW);
@@ -95,6 +113,16 @@ static int modduox_init(struct i2c_client *i2c_client)
 
 	// initialize gpios
 	gpiod_set_value(modduox_gpios->headphone_cv_mode, 0);
+	gpiod_set_value(modduox_gpios->exp_enable1, 0);
+	gpiod_set_value(modduox_gpios->exp_enable2, 0);
+	gpiod_set_value(modduox_gpios->cv_in_bias, 0);
+
+	// FIXME does this mean lowest gain stage? need to confirm
+	gpiod_set_value(modduox_gpios->gain_stage_left1, 1);
+	gpiod_set_value(modduox_gpios->gain_stage_left2, 1);
+	gpiod_set_value(modduox_gpios->gain_stage_right1, 1);
+	gpiod_set_value(modduox_gpios->gain_stage_right2, 1);
+
 	return 0;
 }
 
@@ -181,12 +209,78 @@ static void set_true_bypass(int channel, bool state)
  */
 static void set_headphone_cv_mode(int mode)
 {
-	switch (mode)
-	{
+	switch (mode) {
 	case 0:
 	case 1:
 		gpiod_set_value(modduox_gpios->headphone_cv_mode, mode);
 		headphone_cv_mode = mode != 0;
+		break;
+	default:
+		break;
+	}
+}
+
+static void set_cv_exp_pedal_mode(int mode)
+{
+	switch (mode) {
+	case 0: // cv mode
+		gpiod_set_value(modduox_gpios->exp_enable1, 0);
+		gpiod_set_value(modduox_gpios->exp_enable2, 0);
+		gpiod_set_value(modduox_gpios->cv_in_bias, cv_range_mode);
+		cv_exp_pedal_mode = mode;
+		break;
+
+	case 1: // exp.pedal mode
+		printk("%s(%i): Skipping setting Expression Pedal GPIOs, unsafe for now\n", __func__, mode);
+		// disable this first
+		gpiod_set_value(modduox_gpios->cv_in_bias, CV_RANGE_MODE_0_to_5);
+
+		if (exp_pedal_mode)
+		{
+			//gpiod_set_value(modduox_gpios->exp_enable2, 0);
+			//gpiod_set_value(modduox_gpios->exp_enable1, 1);
+		}
+		else
+		{
+			//gpiod_set_value(modduox_gpios->exp_enable1, 0);
+			//gpiod_set_value(modduox_gpios->exp_enable2, 1);
+		}
+		cv_exp_pedal_mode = mode;
+		break;
+
+	default:
+		break;
+	}
+}
+
+static void set_range_mode(int mode)
+{
+	switch (mode) {
+	case 0:
+	case 1:
+		if (!cv_exp_pedal_mode)
+		{
+			gpiod_set_value(modduox_gpios->cv_in_bias, mode);
+		}
+		cv_range_mode = mode != 0;
+		break;
+	default:
+		break;
+	}
+}
+
+static void set_exp_pedal_mode(int mode)
+{
+	switch (mode) {
+	case 0:
+	case 1:
+		if (cv_exp_pedal_mode)
+		{
+			printk("%s(%i): Skipping setting Expression Pedal GPIOs, unsafe for now\n", __func__, mode);
+			//gpiod_set_value(modduox_gpios->exp_enable1, mode == 0);
+			//gpiod_set_value(modduox_gpios->exp_enable2, mode == 1);
+		}
+		exp_pedal_mode = mode != 0;
 		break;
 	default:
 		break;
@@ -328,6 +422,87 @@ static int headphone_cv_mode_put(struct snd_kcontrol *kcontrol, struct snd_ctl_e
 	int changed = 0;
 	if (headphone_cv_mode != ucontrol->value.integer.value[0]) {
 		set_headphone_cv_mode(ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+//----------------------------------------------------------------------
+
+static int cv_exp_pedal_mode_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+
+static int cv_exp_pedal_mode_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = cv_exp_pedal_mode;
+	return 0;
+}
+
+static int cv_exp_pedal_mode_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (cv_exp_pedal_mode != ucontrol->value.integer.value[0]) {
+		set_cv_exp_pedal_mode(ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+//----------------------------------------------------------------------
+
+static int cv_range_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+
+static int cv_range_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = cv_range_mode;
+	return 0;
+}
+
+static int cv_range_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (cv_range_mode != ucontrol->value.integer.value[0]) {
+		set_range_mode(ucontrol->value.integer.value[0]);
+		changed = 1;
+	}
+	return changed;
+}
+
+//----------------------------------------------------------------------
+
+static int exp_pedal_mode_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
+
+static int exp_pedal_mode_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	ucontrol->value.integer.value[0] = exp_pedal_mode;
+	return 0;
+}
+
+static int exp_pedal_mode_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
+{
+	int changed = 0;
+	if (exp_pedal_mode != ucontrol->value.integer.value[0]) {
+		set_exp_pedal_mode(ucontrol->value.integer.value[0]);
 		changed = 1;
 	}
 	return changed;
@@ -537,6 +712,33 @@ static const struct snd_kcontrol_new cs4265_snd_controls[] = {
 		.info = headphone_cv_mode_info,
 		.get = headphone_cv_mode_get,
 		.put = headphone_cv_mode_put
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "CV/Exp.Pedal Mode",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = cv_exp_pedal_mode_info,
+		.get = cv_exp_pedal_mode_get,
+		.put = cv_exp_pedal_mode_put
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "CV Range",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = cv_range_info,
+		.get = cv_range_get,
+		.put = cv_range_put
+	},
+	{
+		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.name = "Exp.Pedal Mode",
+		.index = 0,
+		.access = SNDRV_CTL_ELEM_ACCESS_READWRITE,
+		.info = exp_pedal_mode_info,
+		.get = exp_pedal_mode_get,
+		.put = exp_pedal_mode_put
 	},
 #endif
 };
