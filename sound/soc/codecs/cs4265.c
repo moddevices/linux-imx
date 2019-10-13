@@ -42,11 +42,12 @@
 #define GPIO_BYPASS     0
 #define GPIO_PROCESS    1
 
-#define CV_RANGE_MODE_m2d5_to_2d5 false
-#define CV_RANGE_MODE_0_to_5      true
+#define CV_RANGE_MODE_0_to_5      false
+#define CV_RANGE_MODE_m2d5_to_2d5 true
 
-#define EXP_PEDAL_SIGNAL_ON_RING false
-#define EXP_PEDAL_SIGNAL_ON_TIP  true
+// tip means enable2, ring enable1
+#define EXP_PEDAL_SIGNAL_ON_TIP  false
+#define EXP_PEDAL_SIGNAL_ON_RING true
 
 static int headphone_volume = 0; // Headphone volume has a total of 16 steps, each corresponds to 3dB. Step 11 is 0dB.
 static int input_left_gain_stage = 0;
@@ -54,9 +55,9 @@ static int input_right_gain_stage = 0;
 static bool left_true_bypass = true;
 static bool right_true_bypass = true;
 static bool headphone_cv_mode = false; // true means CV mode, false is headphone (CV output mode)
-static bool cv_exp_pedal_mode = false; // true means expression pedal mode (CV input mode)
-static bool cv_range_mode = CV_RANGE_MODE_m2d5_to_2d5;
-static bool exp_pedal_mode = EXP_PEDAL_SIGNAL_ON_RING;
+static bool cv_exp_pedal_mode = false; // true means expression pedal mode, false is CV mode (CV input mode)
+static bool cv_range_mode = CV_RANGE_MODE_0_to_5;
+static bool exp_pedal_mode = EXP_PEDAL_SIGNAL_ON_TIP;
 
 static struct _modduox_gpios {
 	struct gpio_desc *headphone_cv_mode;
@@ -112,10 +113,10 @@ static int modduox_init(struct i2c_client *i2c_client)
 	}
 
 	// initialize gpios
-	gpiod_set_value(modduox_gpios->headphone_cv_mode, 0);
+	gpiod_set_value(modduox_gpios->headphone_cv_mode, headphone_cv_mode ? 1 : 0);
+	gpiod_set_value(modduox_gpios->cv_in_bias, cv_range_mode ? 1 : 0);
 	gpiod_set_value(modduox_gpios->exp_enable1, 0);
 	gpiod_set_value(modduox_gpios->exp_enable2, 0);
-	gpiod_set_value(modduox_gpios->cv_in_bias, 0);
 
 	// FIXME does this mean lowest gain stage? need to confirm
 	gpiod_set_value(modduox_gpios->gain_stage_left1, 1);
@@ -235,15 +236,15 @@ static void set_cv_exp_pedal_mode(int mode)
 		// disable this first
 		gpiod_set_value(modduox_gpios->cv_in_bias, CV_RANGE_MODE_0_to_5);
 
-		if (exp_pedal_mode)
-		{
-			//gpiod_set_value(modduox_gpios->exp_enable2, 0);
-			//gpiod_set_value(modduox_gpios->exp_enable1, 1);
-		}
-		else
+		if (exp_pedal_mode == EXP_PEDAL_SIGNAL_ON_TIP)
 		{
 			//gpiod_set_value(modduox_gpios->exp_enable1, 0);
 			//gpiod_set_value(modduox_gpios->exp_enable2, 1);
+		}
+		else
+		{
+			//gpiod_set_value(modduox_gpios->exp_enable2, 0);
+			//gpiod_set_value(modduox_gpios->exp_enable1, 1);
 		}
 		cv_exp_pedal_mode = mode;
 		break;
@@ -277,8 +278,8 @@ static void set_exp_pedal_mode(int mode)
 		if (cv_exp_pedal_mode)
 		{
 			printk("%s(%i): Skipping setting Expression Pedal GPIOs, unsafe for now\n", __func__, mode);
-			//gpiod_set_value(modduox_gpios->exp_enable1, mode == 0);
-			//gpiod_set_value(modduox_gpios->exp_enable2, mode == 1);
+			//gpiod_set_value(modduox_gpios->exp_enable1, mode == (int)EXP_PEDAL_SIGNAL_ON_RING);
+			//gpiod_set_value(modduox_gpios->exp_enable2, mode == (int)EXP_PEDAL_SIGNAL_ON_TIP);
 		}
 		exp_pedal_mode = mode != 0;
 		break;
