@@ -42,10 +42,10 @@ Possible options for midisynth module:
 MODULE_AUTHOR("Frank van de Pol <fvdpol@coil.demon.nl>, Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("Advanced Linux Sound Architecture sequencer MIDI synth.");
 MODULE_LICENSE("GPL");
-static int output_buffer_size = 0x7fff;
+static int output_buffer_size = PAGE_SIZE;
 module_param(output_buffer_size, int, 0644);
 MODULE_PARM_DESC(output_buffer_size, "Output buffer size in bytes.");
-static int input_buffer_size = 0x7fff;
+static int input_buffer_size = PAGE_SIZE;
 module_param(input_buffer_size, int, 0644);
 MODULE_PARM_DESC(input_buffer_size, "Input buffer size in bytes.");
 
@@ -192,7 +192,6 @@ static int midisynth_subscribe(void *private_data, struct snd_seq_port_subscribe
 		pr_debug("ALSA: seq_midi: midi input open failed!!!\n");
 		return err;
 	}
-	printk("MOD Devices: Using MIDI input buffer size %i\n", input_buffer_size);
 	runtime = msynth->input_rfile.input->runtime;
 	memset(&params, 0, sizeof(params));
 	params.avail_min = 1;
@@ -235,7 +234,6 @@ static int midisynth_use(void *private_data, struct snd_seq_port_subscribe *info
 		pr_debug("ALSA: seq_midi: midi output open failed!!!\n");
 		return err;
 	}
-	printk("MOD Devices: Using MIDI output buffer size %i\n", output_buffer_size);
 	memset(&params, 0, sizeof(params));
 	params.avail_min = 1;
 	params.buffer_size = output_buffer_size;
