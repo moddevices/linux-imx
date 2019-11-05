@@ -79,6 +79,7 @@ static struct _modduox_gpios {
 	int irqFlag1, irqFlag2;
 } *modduox_gpios;
 
+#ifndef _MOD_RESTORE
 static void enable_cpu_counters(void *data)
 {
 	printk("MOD Devices: Enabling user-mode PMU access on CPU #%d\n", smp_processor_id());
@@ -90,6 +91,7 @@ static void enable_cpu_counters(void *data)
 	asm volatile("msr PMCNTENSET_EL0, %0" :: "r"(0x8000000f));
 	asm volatile("msr PMCCFILTR_EL0, %0" :: "r"(0));
 }
+#endif
 
 static void set_cv_exp_pedal_mode(int mode);
 
@@ -167,8 +169,10 @@ static int modduox_init(struct i2c_client *i2c_client)
 	else
 		printk("MOD Devices: Expression Pedal flag IRQ failed!\n");
 
+#ifndef _MOD_RESTORE
 	// enable user-mode access to counters
 	on_each_cpu(enable_cpu_counters, NULL, 1);
+#endif
 	return 0;
 }
 
