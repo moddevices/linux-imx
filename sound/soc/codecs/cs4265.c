@@ -35,6 +35,8 @@
 
 #ifdef  __MOD_DEVICES__
 
+#include <linux/interrupt.h>
+
 // GPIO macros
 #define CHANNEL_LEFT    0
 #define CHANNEL_RIGHT   1
@@ -71,11 +73,35 @@ static struct _modduox_gpios {
 	struct gpio_desc *true_bypass_right;
 	struct gpio_desc *exp_enable1;
 	struct gpio_desc *exp_enable2;
+	struct gpio_desc *cv_in_bias;
 	struct gpio_desc *exp_flag1;
 	struct gpio_desc *exp_flag2;
-	struct gpio_desc *cv_detect;
-	struct gpio_desc *cv_in_bias;
+	int irqFlag1, irqFlag2;
 } *modduox_gpios;
+
+static void enable_cpu_counters(void *data)
+{
+	printk("MOD Devices: Enabling user-mode PMU access on CPU #%d\n", smp_processor_id());
+
+	/* Enable user-mode access to counters. */
+	asm volatile("msr PMUSERENR_EL0, %0" :: "r"(1));
+	/* Program PMU and enable all counters */
+	asm volatile("msr PMCR_EL0, %0" :: "r"(23)); // 1|2|4|16
+	asm volatile("msr PMCNTENSET_EL0, %0" :: "r"(0x8000000f));
+	asm volatile("msr PMCCFILTR_EL0, %0" :: "r"(0));
+}
+
+static void set_cv_exp_pedal_mode(int mode);
+
+static irq_handler_t exp_flag_irq_handler(unsigned int irq, void *dev_id, struct pt_regs *regs)
+{
+	printk(KERN_INFO "MOD Devices: Expression Pedal flag IRQ %u triggered! (values are %d %d)\n",
+	       irq,
+	       gpiod_get_value(modduox_gpios->exp_flag1),
+	       gpiod_get_value(modduox_gpios->exp_flag2));
+	set_cv_exp_pedal_mode(0);
+	return IRQ_HANDLED;
+}
 
 static int modduox_init(struct i2c_client *i2c_client)
 {
@@ -94,10 +120,9 @@ static int modduox_init(struct i2c_client *i2c_client)
 	modduox_gpios->gain_stage_right2 = devm_gpiod_get(&i2c_client->dev, "gain_stage_right2", GPIOD_OUT_HIGH);
 	modduox_gpios->exp_enable1       = devm_gpiod_get(&i2c_client->dev, "exp_enable1",       GPIOD_OUT_HIGH);
 	modduox_gpios->exp_enable2       = devm_gpiod_get(&i2c_client->dev, "exp_enable2",       GPIOD_OUT_HIGH);
-	modduox_gpios->exp_flag1         = devm_gpiod_get(&i2c_client->dev, "exp_flag1",         GPIOD_OUT_HIGH);
-	modduox_gpios->exp_flag2         = devm_gpiod_get(&i2c_client->dev, "exp_flag2",         GPIOD_OUT_HIGH);
-	modduox_gpios->cv_detect         = devm_gpiod_get(&i2c_client->dev, "cv_detect",         GPIOD_OUT_HIGH);
 	modduox_gpios->cv_in_bias        = devm_gpiod_get(&i2c_client->dev, "cv_in_bias",        GPIOD_OUT_HIGH);
+	modduox_gpios->exp_flag1         = devm_gpiod_get(&i2c_client->dev, "exp_flag1",         GPIOD_IN);
+	modduox_gpios->exp_flag2         = devm_gpiod_get(&i2c_client->dev, "exp_flag2",         GPIOD_IN);
 
 	// bypass is inverted
 	modduox_gpios->true_bypass_left  = devm_gpiod_get(&i2c_client->dev, "true_bypass_left",  GPIOD_OUT_LOW);
@@ -124,6 +149,26 @@ static int modduox_init(struct i2c_client *i2c_client)
 	gpiod_set_value(modduox_gpios->gain_stage_right1, 1);
 	gpiod_set_value(modduox_gpios->gain_stage_right2, 1);
 
+	modduox_gpios->irqFlag1 = gpiod_to_irq(modduox_gpios->exp_flag1);
+	modduox_gpios->irqFlag2 = gpiod_to_irq(modduox_gpios->exp_flag2);
+
+	if (modduox_gpios->irqFlag1 > 0 && modduox_gpios->irqFlag2 > 0)
+	{
+		if (request_irq(modduox_gpios->irqFlag1, exp_flag_irq_handler, IRQF_TRIGGER_RISING, "exp_flag1_handler", NULL) != 0 ||
+		    request_irq(modduox_gpios->irqFlag2, exp_flag_irq_handler, IRQF_TRIGGER_RISING, "exp_flag2_handler", NULL) != 0)
+		{
+			modduox_gpios->irqFlag1 = 0;
+			modduox_gpios->irqFlag2 = 0;
+		}
+	}
+
+	if (modduox_gpios->irqFlag1 > 0 && modduox_gpios->irqFlag2 > 0)
+		printk("MOD Devices: Expression Pedal flag IRQ setup ok!\n");
+	else
+		printk("MOD Devices: Expression Pedal flag IRQ failed!\n");
+
+	// enable user-mode access to counters
+	on_each_cpu(enable_cpu_counters, NULL, 1);
 	return 0;
 }
 
@@ -221,6 +266,35 @@ static void set_headphone_cv_mode(int mode)
 	}
 }
 
+static void set_exp_pedal_mode(int mode)
+{
+	switch (mode) {
+	case 0:
+	case 1:
+		if (cv_exp_pedal_mode)
+		{
+			if (modduox_gpios->irqFlag1 > 0 && modduox_gpios->irqFlag2 > 0)
+			{
+				printk("MOD Devices: set_exp_pedal_mode(%i) call ignored, as Expression Pedal flag IRQ failed before\n");
+			}
+			else if (mode == (int)EXP_PEDAL_SIGNAL_ON_TIP)
+			{
+				gpiod_set_value(modduox_gpios->exp_enable1, 0);
+				gpiod_set_value(modduox_gpios->exp_enable2, 1);
+			}
+			else
+			{
+				gpiod_set_value(modduox_gpios->exp_enable2, 0);
+				gpiod_set_value(modduox_gpios->exp_enable1, 1);
+			}
+		}
+		exp_pedal_mode = mode != 0;
+		break;
+	default:
+		break;
+	}
+}
+
 static void set_cv_exp_pedal_mode(int mode)
 {
 	switch (mode) {
@@ -228,25 +302,16 @@ static void set_cv_exp_pedal_mode(int mode)
 		gpiod_set_value(modduox_gpios->exp_enable1, 0);
 		gpiod_set_value(modduox_gpios->exp_enable2, 0);
 		gpiod_set_value(modduox_gpios->cv_in_bias, cv_range_mode);
-		cv_exp_pedal_mode = mode;
+		cv_exp_pedal_mode = false;
 		break;
 
 	case 1: // exp.pedal mode
-		printk("%s(%i): Skipping setting Expression Pedal GPIOs, unsafe for now\n", __func__, mode);
 		// disable this first
 		gpiod_set_value(modduox_gpios->cv_in_bias, CV_RANGE_MODE_0_to_5);
 
-		if (exp_pedal_mode == EXP_PEDAL_SIGNAL_ON_TIP)
-		{
-			//gpiod_set_value(modduox_gpios->exp_enable1, 0);
-			//gpiod_set_value(modduox_gpios->exp_enable2, 1);
-		}
-		else
-		{
-			//gpiod_set_value(modduox_gpios->exp_enable2, 0);
-			//gpiod_set_value(modduox_gpios->exp_enable1, 1);
-		}
-		cv_exp_pedal_mode = mode;
+		// safe to set now
+		cv_exp_pedal_mode = true;
+		set_exp_pedal_mode(exp_pedal_mode);
 		break;
 
 	default:
@@ -264,24 +329,6 @@ static void set_range_mode(int mode)
 			gpiod_set_value(modduox_gpios->cv_in_bias, mode);
 		}
 		cv_range_mode = mode != 0;
-		break;
-	default:
-		break;
-	}
-}
-
-static void set_exp_pedal_mode(int mode)
-{
-	switch (mode) {
-	case 0:
-	case 1:
-		if (cv_exp_pedal_mode)
-		{
-			printk("%s(%i): Skipping setting Expression Pedal GPIOs, unsafe for now\n", __func__, mode);
-			//gpiod_set_value(modduox_gpios->exp_enable1, mode == (int)EXP_PEDAL_SIGNAL_ON_RING);
-			//gpiod_set_value(modduox_gpios->exp_enable2, mode == (int)EXP_PEDAL_SIGNAL_ON_TIP);
-		}
-		exp_pedal_mode = mode != 0;
 		break;
 	default:
 		break;
