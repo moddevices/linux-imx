@@ -277,7 +277,7 @@ static void set_exp_pedal_mode(int mode)
 	case 1:
 		if (cv_exp_pedal_mode)
 		{
-			if (modduox_gpios->irqFlag1 > 0 && modduox_gpios->irqFlag2 > 0)
+			if (modduox_gpios->irqFlag1 <= 0 || modduox_gpios->irqFlag2 <= 0)
 			{
 				printk("MOD Devices: set_exp_pedal_mode(%i) call ignored, as Expression Pedal flag IRQ failed before\n");
 			}
