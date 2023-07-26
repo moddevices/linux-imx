@@ -668,7 +668,7 @@ static struct uac2_input_terminal_descriptor io_in_it_desc = {
 
 	.bDescriptorSubtype = UAC_INPUT_TERMINAL,
 	.bTerminalID = IO_IN_IT_ID,
-	.wTerminalType = cpu_to_le16(UAC_INPUT_TERMINAL_MICROPHONE),
+	.wTerminalType = cpu_to_le16(0x603),
 	.bAssocTerminal = 0,
 	.bCSourceID = USB_IN_CLK_ID,
 	.iChannelNames = 0,
@@ -696,7 +696,7 @@ static struct uac2_output_terminal_descriptor io_out_ot_desc = {
 
 	.bDescriptorSubtype = UAC_OUTPUT_TERMINAL,
 	.bTerminalID = IO_OUT_OT_ID,
-	.wTerminalType = cpu_to_le16(UAC_OUTPUT_TERMINAL_SPEAKER),
+	.wTerminalType = cpu_to_le16(0x603),
 	.bAssocTerminal = 0,
 	.bSourceID = USB_OUT_IT_ID,
 	.bCSourceID = USB_OUT_CLK_ID,
@@ -707,7 +707,7 @@ static struct uac2_ac_header_descriptor ac_hdr_desc = {
 	.bLength = sizeof ac_hdr_desc,
 	.bDescriptorType = USB_DT_CS_INTERFACE,
 
-	.bDescriptorSubtype = UAC_HEADER,
+	.bDescriptorSubtype = UAC_MS_HEADER,
 	.bcdADC = cpu_to_le16(0x200),
 	.bCategory = UAC2_FUNCTION_IO_BOX,
 	.wTotalLength = cpu_to_le16(sizeof ac_hdr_desc
